@@ -1,29 +1,17 @@
 # Codexmodel
 
-Codexmodel is an independently built, extensible AI assistant runtime. It is intended to provide a practical foundation for conversational AI, model-provider adapters, controlled tool execution, session memory, file workflows, and multimodal extensions.
+Codexmodel is an independently built, extensible AI assistant runtime. It provides a practical foundation for conversational AI and explicitly configured model-provider integrations.
 
-> **Scope and honesty:** Codexmodel does not contain or reproduce ChatGPT's private model weights, hidden instructions, proprietary services, or internal runtime. It implements its own interfaces and integrations and requires explicitly configured model providers for model-backed responses.
+> **Scope and honesty:** Codexmodel does not contain or reproduce ChatGPT's private model weights, hidden instructions, proprietary services, or internal runtime. It implements its own interfaces and integrations and requires an explicitly configured model endpoint for model-backed responses.
 
-## Design goals
+## Current implementation
 
-- **Provider-neutral:** use a documented adapter interface so local and hosted models can be integrated without coupling the core to one vendor.
-- **Tool safety first:** tools are registered explicitly, validated, and permission-gated. No arbitrary shell execution by default.
-- **Privacy by design:** local SQLite session storage, configurable retention, secrets supplied through environment variables, and no telemetry by default.
-- **Multimodal-ready:** clear extension points for image, audio, and document inputs; each capability must be implemented and tested before being advertised as available.
-- **Observable and testable:** health checks, structured errors, unit tests, and explicit capability reporting.
-- **Repository-owned:** code, configuration, docs, and tests in this repository; no unrelated project is bundled or linked as a dependency.
-
-## Planned capability layers
-
-1. **API/runtime:** health, capabilities, chat, sessions, and tool invocation endpoints.
-2. **Conversation engine:** messages, context assembly, cancellation, and provider-neutral response handling.
-3. **Model adapters:** local inference and hosted-provider adapters behind one interface.
-4. **Tools:** allowlisted tools with JSON schemas, authorization, timeouts, and audit events.
-5. **Memory:** opt-in session history and user-controlled persistence.
-6. **Content pipeline:** bounded file ingestion and future image/audio adapters.
-7. **Evaluation and operations:** tests, configuration validation, logging, packaging, and deployment guidance.
-
-These are architectural targets, not claims that every capability is already implemented. Consult the capability endpoint and tests for the current verified state.
+- FastAPI endpoints: `GET /health`, `GET /capabilities`, and `POST /chat`.
+- An OpenAI-compatible `/chat/completions` adapter, usable with a local or hosted endpoint.
+- Server-side optional bearer-token configuration; credentials are never returned by the API.
+- Bounded request and response sizes, configurable request timeout, and sanitized provider errors.
+- Explicit capability reporting. Persistent memory, tool execution, image/audio input, and file ingestion remain unavailable.
+- Pytest and Ruff checks in GitHub Actions.
 
 ## Quick start
 
@@ -33,38 +21,56 @@ Requirements: Python 3.11 or newer.
 python -m venv .venv
 # Linux/macOS
 source .venv/bin/activate
-# Windows PowerShell
-# .venv\Scripts\Activate.ps1
+# Windows PowerShell: .venv\\Scripts\\Activate.ps1
 pip install -e ".[dev]"
 cp .env.example .env
+```
+
+Set these environment variables in your shell or deployment environment (the app does not automatically load `.env`):
+
+- `CODEXMODEL_PROVIDER=openai_compatible`
+- `CODEXMODEL_BASE_URL=http://127.0.0.1:1234/v1` (example local endpoint)
+- `CODEXMODEL_MODEL=your-model-id`
+- `CODEXMODEL_API_KEY` only if your endpoint requires it
+- `CODEXMODEL_TIMEOUT_SECONDS=30` (optional)
+
+Run the API:
+
+```bash
 uvicorn codexmodel.app:app --reload
 ```
 
-Open `http://127.0.0.1:8000/docs` for the local API schema and `/health` for health status. A model provider is not configured by default; the service must report this accurately and must not pretend a model response was generated.
+Example request:
 
-Run tests:
+```bash
+curl -s http://127.0.0.1:8000/chat \\\
+  -H 'Content-Type: application/json' \\\
+  -d '{"message":"Hello"}'
+```
+
+Run checks:
 
 ```bash
 pytest
+ruff check .
 ```
 
-## Configuration
+## Architecture and next layers
 
-Configuration is read from environment variables. Never commit provider API keys or credentials. Keep the server bound to localhost during development; deploy behind authentication, TLS, request limits, and an explicit network policy.
+1. **API/runtime:** health, capabilities, chat.
+2. **Model adapter:** synchronous OpenAI-compatible chat-completions interface.
+3. **Tools:** allowlisted registry exists as a separate foundation but is not connected to chat.
+4. **Memory:** session history is not persisted.
+5. **Multimodal content:** image, audio, and file inputs are not implemented.
+6. **Operations:** add authentication, rate limiting, deployment controls, and integration tests before public exposure.
 
-## Security baseline
+## Security notes
 
-- Reject oversized requests and unsupported content types.
-- Keep provider credentials server-side.
-- Never execute arbitrary model-generated shell commands.
-- Treat retrieved documents and tool output as untrusted data, not instructions.
-- Require authorization for tools that can change state or access external systems.
-- Avoid logging secrets or full sensitive prompts by default.
-- Do not expose the API publicly without authentication and rate limiting.
-
-## Development status
-
-This repository is being bootstrapped from an empty repository. Initial commits establish the project contract and minimal runtime; advanced provider, vision, speech, browsing, and agent capabilities must be added independently and verified with tests before being marked complete.
+- Keep provider credentials server-side and out of source control.
+- Bind to localhost during development; do not expose this API publicly without authentication, TLS, and rate limiting.
+- Only send requests to a provider endpoint you trust. The configured endpoint receives the user's message.
+- Model output is returned as text and is never executed as code.
+- Provider response bodies and network details are not forwarded in API errors.
 
 ## License
 
