@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from io import BytesIO
+from urllib.error import URLError
 
 from fastapi.testclient import TestClient
 
 from codexmodel.app import app, capability_snapshot
 from codexmodel.openai_compatible import OpenAICompatibleProvider, ProviderError
+from codexmodel.providers import ChatMessage, ModelReply
 
 client = TestClient(app)
 
@@ -48,7 +50,7 @@ def test_provider_configuration_requires_url_and_model(monkeypatch) -> None:
     assert response.json()["detail"]["code"] == "provider_not_configured"
 
 
-def test_chat_returns_real_adapter_reply_when_provider_is_mocked(monkeypatch) -> None:
+def test_chat_returns_adapter_reply_when_provider_is_mocked(monkeypatch) -> None:
     monkeypatch.setenv("CODEXMODEL_PROVIDER", "openai_compatible")
     monkeypatch.setenv("CODEXMODEL_BASE_URL", "http://localhost:1234/v1")
     monkeypatch.setenv("CODEXMODEL_MODEL", "local-test-model")
@@ -56,7 +58,6 @@ def test_chat_returns_real_adapter_reply_when_provider_is_mocked(monkeypatch) ->
     def fake_generate(self, messages):
         assert messages[0].role == "user"
         assert messages[0].content == "Hello"
-        from codexmodel.providers import ModelReply
         return ModelReply("Hi from the test provider", "openai_compatible", "local-test-model")
 
     monkeypatch.setattr(OpenAICompatibleProvider, "generate", fake_generate)
@@ -86,6 +87,7 @@ def test_adapter_parses_chat_completions_response(monkeypatch) -> None:
         captured["url"] = request.full_url
         captured["timeout"] = timeout
         captured["body"] = json.loads(request.data.decode("utf-8"))
+        captured["authorization"] = request.get_header("Authorization")
         return FakeResponse(b'{"choices":[{"message":{"content":"Model answer"}}]}')
 
     monkeypatch.setattr(adapter_module, "urlopen", fake_urlopen)
@@ -94,14 +96,14 @@ def test_adapter_parses_chat_completions_response(monkeypatch) -> None:
         model="test-model",
         api_key="test-secret",
     )
-    reply = provider.generate([__import__("codexmodel.providers", fromlist=["ChatMessage"]).ChatMessage("user", "Hello")])
+    reply = provider.generate([ChatMessage("user", "Hello")])
     assert reply.content == "Model answer"
     assert captured["url"] == "http://127.0.0.1:1234/v1/chat/completions"
     assert captured["body"]["model"] == "test-model"
+    assert captured["authorization"] == "Bearer test-secret"
 
 
-def test_adapter_does_not_expose_provider_error_body(monkeypatch) -> None:
-    from urllib.error import URLError
+def test_adapter_does_not_expose_provider_error_details(monkeypatch) -> None:
     import codexmodel.openai_compatible as adapter_module
 
     def fail_urlopen(request, timeout):
@@ -110,7 +112,7 @@ def test_adapter_does_not_expose_provider_error_body(monkeypatch) -> None:
     monkeypatch.setattr(adapter_module, "urlopen", fail_urlopen)
     provider = OpenAICompatibleProvider(base_url="http://localhost/v1", model="test")
     try:
-        provider.generate([__import__("codexmodel.providers", fromlist=["ChatMessage"]).ChatMessage("user", "Hello")])
+        provider.generate([ChatMessage("user", "Hello")])
     except ProviderError as exc:
         assert "secret-bearing" not in str(exc)
     else:
